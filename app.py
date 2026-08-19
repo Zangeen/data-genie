@@ -1,6 +1,40 @@
 import streamlit as st
 import pandas as pd
 
+import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
+from langchain_core.tools import tool
+from langchain_groq import ChatGroq
+df = pd.read_csv("data/sales.csv")
+@tool
+def calculate_total_revenue():
+    """Calculate the total revenue in the uploaded sales data."""
+    return df["Revenue"].sum()
+
+@tool
+def revenue_by_city():
+    """Calculate total revenue for each city."""
+    return df.groupby("City")["Revenue"].sum().to_dict()
+
+@tool
+def revenue_by_product():
+    """Calculate total revenue for each product."""
+    return df.groupby("Product")["Revenue"].sum().to_dict()
+llm = ChatGroq(
+    model="openai/gpt-oss-20b",
+    temperature=0
+)
+tools = [
+    calculate_total_revenue,
+    revenue_by_city,
+    revenue_by_product
+]
+
+llm_with_tools = llm.bind_tools(tools)
+
 st.title("       Data Genie 🤖📊     ")
 st.header("   Business Intelligence Dashboard      ")
 st.header("😄welcome")
@@ -16,10 +50,6 @@ if uploaded_file is not None:
     st.success("✅ File uploaded successfully!")
 
     st.dataframe(df)
-
-df = pd.read_csv("data/sales.csv")
-
-st.dataframe(df)
 
 total_revenue = df["Revenue"].sum()
 total_quantity = df["Quantity"].sum()
@@ -59,43 +89,45 @@ best_product = df.groupby("Product")["Revenue"].sum().idxmax()
 st.success(f"🏆 Best Performing Product: {best_product}")
 
 
-import os
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
-load_dotenv()
 
-llm = ChatGroq(
-    model="openai/gpt-oss-20b",
-    temperature=0
-)
 st.header("🤖 Ask Data Genie")
-
-
 question = st.chat_input(
     "💬 Ask a question about your data...",
-    key="Data Genie"
+    key="data_genie_chat"
 )
-
 if question:
-    data_summary = df.to_string()
+    response = llm_with_tools.invoke(question)
 
-    prompt = f"""
-You are a Business Intelligence assistant.
+    if response.tool_calls:
+        for tool_call in response.tool_calls:
 
-Here is the business data:
+            tool_name = tool_call["name"]
 
-{data_summary}
+            if tool_name == "calculate_total_revenue":
+                result = calculate_total_revenue.invoke({})
 
-Answer the user's question using the data above.
+            elif tool_name == "revenue_by_city":
+                result = revenue_by_city.invoke({})
 
-User question:
-{question}
-"""
+            elif tool_name == "revenue_by_product":
+                result = revenue_by_product.invoke({})
 
-    response = llm.invoke(prompt)
+            final_prompt = f"""
+            You are a Business Intelligence assistant.
 
-    st.write(response.content)
+            The user asked:
+            {question}
 
-def calculate_total_revenue(df):
-    return df["Revenue"].sum()
+            The data tool returned:
+            {result}
+
+            Give the user a clear and simple business answer.
+            """
+
+            final_response = llm.invoke(final_prompt)
+
+            st.write(final_response.content)
+
+    else:
+        st.write(response.content)
